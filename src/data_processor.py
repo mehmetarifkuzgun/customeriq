@@ -216,45 +216,47 @@ class DataProcessor:
         return cleaned_data, outlier_info
     
     def create_sample_dataset(self, n_customers=1000, n_transactions_range=(1, 50)):
+        """Synthetic transactions from a simple buy-till-you-die process.
+
+        Each customer joins on a random day in the past two years, buys at a
+        personal Poisson rate and, after every purchase, may drop out for good
+        with a personal probability. This yields a realistic mix of one-time,
+        loyal and lapsed customers (and well-behaved BG/NBD inputs).
+        ``n_transactions_range[1]`` caps orders per customer.
+        """
         self.logger.info("Creating sample dataset...")
-        
-        np.random.seed(42)
-        
-        # Generate customer IDs
-        customer_ids = range(1, n_customers + 1)
-        
+
+        rng = np.random.RandomState(42)
+        horizon_days = 730
+        now = datetime.now()
+        max_orders = n_transactions_range[1]
+        categories = ['Electronics', 'Clothing', 'Home & Garden', 'Books', 'Sports', 'Beauty', 'Food']
+
         transactions = []
-        
-        for customer_id in customer_ids:
-            # Random number of transactions per customer
-            n_transactions = np.random.randint(n_transactions_range[0], n_transactions_range[1] + 1)
-            
-            # Generate transaction dates over past 2 years
-            start_date = datetime.now() - timedelta(days=730)
-            end_date = datetime.now() - timedelta(days=1)
-            
-            # Create random dates for this customer
-            random_dates = pd.date_range(start_date, end_date, periods=n_transactions)
-            random_dates = np.random.choice(random_dates, n_transactions, replace=False)
-            random_dates = sorted(random_dates)
-            
-            # Generate order values (log-normal distribution)
-            base_value = np.random.lognormal(3.5, 0.8)  # Customer's base spending
-            order_values = np.random.lognormal(np.log(base_value), 0.5, n_transactions)
-            order_values = np.round(order_values, 2)
-            
-            # Product categories
-            categories = ['Electronics', 'Clothing', 'Home & Garden', 'Books', 'Sports', 'Beauty', 'Food']
-            
-            for i in range(n_transactions):
+        for customer_id in range(1, n_customers + 1):
+            t = rng.uniform(0, horizon_days - 1)          # first purchase (days from start)
+            rate = rng.gamma(2.0, 0.012)                   # purchases per day (mean ~ every 42 days)
+            dropout = rng.beta(0.5, 6.0)                   # P(never buys again) after each order
+            offsets = [t]
+            while len(offsets) < max_orders:
+                t += rng.exponential(1 / max(rate, 1e-4))
+                if t > horizon_days - 1:
+                    break
+                offsets.append(t)
+                if rng.rand() < dropout:
+                    break
+
+            base_value = rng.lognormal(3.5, 0.8)           # customer's typical basket
+            order_values = np.round(rng.lognormal(np.log(base_value), 0.5, len(offsets)), 2)
+            for off, value in zip(offsets, order_values):
                 transactions.append({
                     'customer_id': customer_id,
-                    'order_date': random_dates[i],
-                    'order_value': order_values[i],
-                    'product_category': np.random.choice(categories),
-                    'quantity': np.random.randint(1, 6)
+                    'order_date': now - timedelta(days=horizon_days - float(off)),
+                    'order_value': value,
+                    'product_category': categories[rng.randint(len(categories))],
+                    'quantity': rng.randint(1, 6),
                 })
-        
+
         sample_data = pd.DataFrame(transactions)
         
         # Save sample data

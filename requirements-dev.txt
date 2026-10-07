@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=7.4
+pytest-cov
+flake8
+playwright>=1.40   # only for scripts/capture_screenshots.py

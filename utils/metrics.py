@@ -57,19 +57,29 @@ class ModelMetrics:
 class BusinessMetrics:
     
     @staticmethod
+    def _last_purchase(customer_data):
+        """Last-purchase column: 'last_purchase_date' (DataProcessor) or legacy 'last_purchase'."""
+        for col in ('last_purchase_date', 'last_purchase'):
+            if col in customer_data.columns:
+                return customer_data[col]
+        raise KeyError("customer_data needs a 'last_purchase_date' column")
+
+    @staticmethod
     def calculate_retention_rate(customer_data, period_days=90):
-        customer_data['last_purchase'] = pd.to_datetime(customer_data['last_purchase'])
-        cutoff_date = customer_data['last_purchase'].max() - pd.Timedelta(days=period_days)
+        last = pd.to_datetime(BusinessMetrics._last_purchase(customer_data))
+        cutoff_date = last.max() - pd.Timedelta(days=period_days)
         
-        active_customers = customer_data[customer_data['last_purchase'] >= cutoff_date]
+        active_customers = customer_data[last >= cutoff_date]
         retention_rate = len(active_customers) / len(customer_data)
         
         return retention_rate
     
     @staticmethod
     def calculate_churn_rate(customer_data, churn_threshold_days=90):
-        customer_data['last_purchase'] = pd.to_datetime(customer_data['last_purchase'])
-        days_since_last = (pd.Timestamp.now() - customer_data['last_purchase']).dt.days
+        last = pd.to_datetime(BusinessMetrics._last_purchase(customer_data))
+        # measured against the newest order in the data (not wall-clock "now"),
+        # consistent with the days_since_last_purchase column
+        days_since_last = (last.max() - last).dt.days
         
         churned_customers = (days_since_last > churn_threshold_days).sum()
         churn_rate = churned_customers / len(customer_data)
