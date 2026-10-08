@@ -50,7 +50,7 @@ class RFMAnalyzer:
             raise ValueError("No monetary information found in data")
         
         # Calculate RFM scores using quantiles
-        rfm_data['R_Score'] = pd.qcut(rfm_data['Recency'], q=self.quantiles, labels=range(self.quantiles, 0, -1))
+        rfm_data['R_Score'] = pd.qcut(rfm_data['Recency'].rank(method='first'), q=self.quantiles, labels=range(self.quantiles, 0, -1))
         rfm_data['F_Score'] = pd.qcut(rfm_data['Frequency'].rank(method='first'), q=self.quantiles, labels=range(1, self.quantiles + 1))
         rfm_data['M_Score'] = pd.qcut(rfm_data['Monetary'].rank(method='first'), q=self.quantiles, labels=range(1, self.quantiles + 1))
         

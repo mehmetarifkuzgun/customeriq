@@ -7,9 +7,10 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 try:
-    from lifelines import BetaGeoFitter, GammaGammaFitter
+    # BG/NBD and Gamma-Gamma live in `lifetimes` (not `lifelines`, which is survival analysis)
+    from lifetimes import BetaGeoFitter, GammaGammaFitter
 except ImportError:
-    print("Warning: lifelines not installed. CLV models will use simplified calculations.")
+    print("Warning: lifetimes not installed. CLV models will use simplified calculations.")
     BetaGeoFitter = None
     GammaGammaFitter = None
 import joblib
@@ -28,8 +29,10 @@ class CLVCalculator:
         self.setup_logging()
         
         # Initialize models
-        self.bgf_model = BetaGeoFitter()  # BG/NBD model for purchase prediction
-        self.ggf_model = GammaGammaFitter()  # Gamma-Gamma model for monetary prediction
+        # BG/NBD (purchase prediction) and Gamma-Gamma (monetary) probabilistic models;
+        # None when `lifetimes` is unavailable -> ML-only CLV path.
+        self.bgf_model = BetaGeoFitter(penalizer_coef=0.01) if BetaGeoFitter else None
+        self.ggf_model = GammaGammaFitter(penalizer_coef=0.01) if GammaGammaFitter else None
         self.ml_model = None
         self.scaler = StandardScaler()
         

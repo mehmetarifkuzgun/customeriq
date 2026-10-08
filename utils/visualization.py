@@ -75,10 +75,12 @@ class CustomerVisualizer:
         return fig
     
     def plot_churn_risk_heatmap(self, customer_data):
-        if 'Churn_Probability' not in customer_data.columns:
+        # The database returns snake_case columns (segment, risk_category, churn_probability)
+        customer_data = customer_data.rename(columns=str.lower)
+        if not {'churn_probability', 'segment', 'risk_category'} <= set(customer_data.columns):
             return None
             
-        heatmap_data = customer_data.groupby(['Segment', 'Risk_Category']).size().unstack(fill_value=0)
+        heatmap_data = customer_data.groupby(['segment', 'risk_category']).size().unstack(fill_value=0)
         
         fig = go.Figure(data=go.Heatmap(
             z=heatmap_data.values,
@@ -103,15 +105,22 @@ class CustomerVisualizer:
             subplot_titles=('CLV Distribution', 'CLV by Segment')
         )
         
+        # Pick whichever CLV estimate the model produced
+        clv_col = next((c for c in ('clv_combined', 'clv_ml', 'clv_bgf', 'predicted_clv', 'CLV')
+                        if c in clv_data.columns), None)
+        if clv_col is None:
+            raise KeyError("clv_data has no CLV column (expected clv_combined / clv_ml / clv_bgf)")
+        seg_col = next((c for c in ('clv_segment', 'Segment') if c in clv_data.columns), None)
+
         # CLV Distribution
         fig.add_trace(
-            go.Histogram(x=clv_data['CLV'], name='CLV Distribution', nbinsx=30),
+            go.Histogram(x=clv_data[clv_col], name='CLV Distribution', nbinsx=30),
             row=1, col=1
         )
         
         # CLV by Segment
-        if 'Segment' in clv_data.columns:
-            segment_clv = clv_data.groupby('Segment')['CLV'].mean().sort_values(ascending=True)
+        if seg_col:
+            segment_clv = clv_data.groupby(seg_col, observed=True)[clv_col].mean().sort_values(ascending=True)
             fig.add_trace(
                 go.Bar(
                     x=segment_clv.values,

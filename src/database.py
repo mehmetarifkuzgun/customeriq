@@ -158,8 +158,15 @@ class DatabaseManager:
                 conn.execute(text("DELETE FROM rfm_scores"))
                 conn.commit()
             
-            # Insert new RFM scores
-            self.insert_data('rfm_scores', rfm_data, if_exists='append')
+            # Map the analyzer's output onto the table schema (the analyzer returns
+            # extra columns such as 'Recency'/'R_Score', plus all customer features)
+            columns = {
+                'customer_id': 'customer_id', 'Recency': 'recency', 'Frequency': 'frequency',
+                'Monetary': 'monetary', 'R_Score': 'r_score', 'F_Score': 'f_score',
+                'M_Score': 'm_score', 'RFM_Score': 'rfm_score', 'Segment': 'segment',
+            }
+            table_data = rfm_data[list(columns)].rename(columns=columns)
+            self.insert_data('rfm_scores', table_data, if_exists='append')
             self.logger.info("RFM scores updated successfully")
             
         except SQLAlchemyError as e:
@@ -174,7 +181,7 @@ class DatabaseManager:
                 conn.commit()
             
             # Insert new predictions
-            self.insert_data('churn_predictions', predictions_data, if_exists='append')
+            self.insert_data('churn_predictions', predictions_data, if_exists='replace')
             self.logger.info("Churn predictions updated successfully")
             
         except SQLAlchemyError as e:
@@ -189,7 +196,15 @@ class DatabaseManager:
                 conn.commit()
             
             # Insert new CLV predictions
-            self.insert_data('clv_predictions', clv_data, if_exists='append')
+            clv_data = clv_data.copy()
+            if 'predicted_clv' not in clv_data.columns:
+                # get_customer_data() joins on predicted_clv: expose the model's chosen CLV
+                for col in ('clv_combined', 'clv_ml', 'clv_bgf'):
+                    if col in clv_data.columns:
+                        clv_data['predicted_clv'] = clv_data[col]
+                        break
+            # replace: the frame carries the model's own columns (purchases, BGF/ML/combined CLV, ...)
+            self.insert_data('clv_predictions', clv_data, if_exists='replace')
             self.logger.info("CLV predictions updated successfully")
             
         except SQLAlchemyError as e:

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.ipynb_checkpoints/
+
+# Generated at runtime (SQLite DB, synthetic CSVs, trained models)
+customeriq.db
+data/
+models/

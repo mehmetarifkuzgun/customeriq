@@ -61,6 +61,45 @@ class ChurnPredictor:
         
         return data_with_labels
     
+    def build_temporal_training_set(self, transaction_data, feature_builder, horizon_days=None):
+        """Leakage-free training set: features as of a cutoff, label = future behaviour.
+
+        ``create_churn_labels`` defines churn as ``days_since_last_purchase > N`` and
+        that same column (plus recency, lifespan, ``orders_last_Nd`` ...) is also a
+        feature, so a model trained on it scores a perfect 1.0 without learning
+        anything. Here the history is split at ``cutoff = last_date - horizon``:
+        features are computed only from orders up to the cutoff, and a customer is
+        churned if they place **no order in the following ``horizon`` days**.
+
+        Returns ``(labeled_customers, past_transactions)``; pass both to
+        ``engineer_features``.
+        """
+        horizon = int(horizon_days or self.churn_threshold_days)
+        tx = transaction_data.copy()
+        tx['order_date'] = pd.to_datetime(tx['order_date'])
+
+        cutoff = tx['order_date'].max() - timedelta(days=horizon)
+        past = tx[tx['order_date'] <= cutoff].copy()
+        future = tx[tx['order_date'] > cutoff]
+        if past.empty:
+            raise ValueError(f"Not enough history: no orders before the cutoff ({horizon} days before the last order)")
+
+        customers = feature_builder(past)
+        # recency measured at the cutoff, not at the end of the data
+        customers['days_since_last_purchase'] = (
+            cutoff - pd.to_datetime(customers['last_purchase_date'])
+        ).dt.days
+        customers['is_churned'] = (~customers['customer_id'].isin(future['customer_id'].unique())).astype(int)
+
+        rate = customers['is_churned'].mean()
+        self.logger.info(
+            f"Temporal churn set: cutoff={cutoff.date()}, horizon={horizon}d, "
+            f"{len(customers)} customers, churn rate {rate:.1%}"
+        )
+        if customers['is_churned'].nunique() < 2:
+            raise ValueError("Only one churn class in the temporal split; need more history or a different horizon")
+        return customers, past
+
     def engineer_features(self, customer_data, transaction_data=None):
         self.logger.info("Engineering features for churn prediction...")
         
@@ -104,6 +143,9 @@ class ChurnPredictor:
         # Transaction-based features (if transaction data is provided)
         if transaction_data is not None:
             additional_features = self._create_transaction_features(features_data, transaction_data)
+            # drop columns the customer table already has (otherwise pandas suffixes them _x/_y)
+            overlap = [c for c in additional_features.columns if c != 'customer_id' and c in features_data.columns]
+            additional_features = additional_features.drop(columns=overlap)
             features_data = features_data.merge(additional_features, on='customer_id', how='left')
         
         # Handle missing values

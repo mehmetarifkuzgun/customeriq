@@ -135,17 +135,19 @@ class CustomerIQApp:
                 if 'risk_category' in customer_data.columns:
                     risk_counts = customer_data['risk_category'].value_counts()
                     colors = [RISK_CATEGORIES.get(risk, {}).get('color', '#1f77b4') for risk in risk_counts.index]
+                    risk_df = risk_counts.rename_axis('risk').reset_index(name='customers')
                     fig_risk = px.bar(
-                        x=risk_counts.index,
-                        y=risk_counts.values,
+                        risk_df,
+                        x='risk',
+                        y='customers',
                         title="Customers by Risk Level",
-                        color=risk_counts.index,
+                        color='risk',
                         color_discrete_sequence=colors
                     )
                     st.plotly_chart(fig_risk, use_container_width=True)
             
             st.subheader("📈 Recent Trends")
-            self._display_recent_trends(customer_data)
+            self._display_recent_trends(customer_data, self.db_manager.get_transaction_data())
             
         except Exception as e:
             st.error(f"Error loading dashboard: {str(e)}")
@@ -293,10 +295,15 @@ class CustomerIQApp:
             
             if st.button("Train Churn Models"):
                 with st.spinner("Training churn prediction models..."):
-                    labeled_data = self.churn_predictor.create_churn_labels(customer_data)
+                    # Features as of a cutoff, label = no purchase in the following
+                    # `churn_threshold` days (avoids label leakage, see ChurnPredictor)
+                    labeled_data, past_transactions = self.churn_predictor.build_temporal_training_set(
+                        transaction_data, self.data_processor.create_customer_features,
+                        horizon_days=churn_threshold
+                    )
                     
                     feature_data = self.churn_predictor.engineer_features(
-                        labeled_data, transaction_data
+                        labeled_data, past_transactions
                     )
                     
                     X_train, X_test, y_train, y_test, feature_names = self.churn_predictor.prepare_training_data(
@@ -326,6 +333,12 @@ class CustomerIQApp:
             
             if st.button("Predict Churn Risk"):
                 with st.spinner("Predicting churn risk..."):
+                    # Streamlit re-creates this object on every rerun, so fall back to
+                    # the model saved by "Train Churn Models"
+                    if self.churn_predictor.rf_model is None:
+                        saved = self.churn_predictor.models_dir / "churn_model.pkl"
+                        if saved.exists():
+                            self.churn_predictor.load_models(saved)
                     feature_data = self.churn_predictor.engineer_features(customer_data, transaction_data)
                     
                     predictions = self.churn_predictor.predict_churn(feature_data)
@@ -353,8 +366,10 @@ class CustomerIQApp:
                         st.dataframe(high_risk.head())
                     
                     st.subheader("Churn Analysis Insights")
+                    # customer_data already holds (empty) prediction columns from the DB join
+                    stale = [c for c in predictions.columns if c != 'customer_id' and c in customer_data.columns]
                     churn_analysis = self.churn_predictor.analyze_churn_factors(
-                        customer_data.merge(predictions, on='customer_id')
+                        customer_data.drop(columns=stale).merge(predictions, on='customer_id')
                     )
                     self._display_churn_insights(churn_analysis)
         
@@ -658,19 +673,37 @@ class CustomerIQApp:
             for issue in quality_report['consistency_issues']:
                 st.warning(issue)
     
-    def _display_recent_trends(self, customer_data):
+    def _display_recent_trends(self, customer_data, transaction_data=None):
+        """Last 30 days vs the 30 days before, anchored on the newest order in the data."""
+        if transaction_data is None or transaction_data.empty:
+            st.caption("Process transaction data to see recent trends.")
+            return
+
+        tx = transaction_data.copy()
+        tx['order_date'] = pd.to_datetime(tx['order_date'])
+        end = tx['order_date'].max()
+        recent = tx[tx['order_date'] > end - pd.Timedelta(days=30)]
+        prior = tx[(tx['order_date'] <= end - pd.Timedelta(days=30))
+                   & (tx['order_date'] > end - pd.Timedelta(days=60))]
+
+        first_order = tx.groupby('customer_id')['order_date'].min()
+        new_customers = int((first_order > end - pd.Timedelta(days=30)).sum())
+
+        def change(now, before):
+            return f"{(now - before) / before:+.1%}" if before else "n/a"
+
         col1, col2 = st.columns(2)
-        
         with col1:
-            st.write("**Recent Activity**")
-            st.write("- New customers this month: TBD")
-            st.write("- Churned customers: TBD")
-        
+            st.write("**Last 30 days**")
+            st.write(f"- New customers: {new_customers:,}")
+            st.write(f"- Active customers: {recent['customer_id'].nunique():,}")
+            st.write(f"- Revenue: ${recent['order_value'].sum():,.0f}")
         with col2:
-            st.write("**Trends**")
-            st.write("- Revenue growth: TBD")
-            st.write("- Churn rate change: TBD")
-    
+            st.write("**vs. previous 30 days**")
+            st.write(f"- Revenue: {change(recent['order_value'].sum(), prior['order_value'].sum())}")
+            st.write(f"- Orders: {change(len(recent), len(prior))}")
+            st.write(f"- Active customers: {change(recent['customer_id'].nunique(), prior['customer_id'].nunique())}")
+
     def _display_recommendations(self, recommendations):
         for segment, rec in recommendations.items():
             with st.expander(f"{segment} - {rec['strategy']}"):
