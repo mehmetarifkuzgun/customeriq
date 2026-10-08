@@ -77,16 +77,6 @@ scripts/    capture_screenshots.py
 - The notebooks were not re-validated while preparing this repo.
 - No authentication; it's a local analytics tool, not a multi-user service.
 
-## Fixes made while preparing this repo for publication
-
-Found by actually running every page, then fixed with regression tests:
-
-1. **App could not start on a clean install** — `BetaGeoFitter`/`GammaGammaFitter` were imported from `lifelines` (they live in `lifetimes`); the failed import was swallowed and the constructor crashed.
-2. **Sample data was degenerate** — every multi-order customer's last purchase was "yesterday", so RFM crashed with `Bin edges must be unique` on the app's own default dataset. The generator is now a purchase/dropout simulation.
-3. **Churn model scored 1.0 on everything** (label leakage, see above).
-4. RFM / CLV / churn results could not be written to SQLite (table schemas didn't match the frames); *Predict* after *Train* always failed (model not persisted across Streamlit reruns); the dashboard's risk chart and the Business Insights page raised errors (wrong column names); the "Churn Threshold" slider wasn't wired to anything; "Recent Trends" were `TBD` placeholders and now show real last-30-days numbers.
-5. Housekeeping: removed a committed `.pyc`, added `.gitignore`; `requirements.txt` listed the uninstallable `sqlite3` and unused packages, now tested version ranges; CI no longer references secrets/Slack/deploy steps that could not run; Dockerfile moved off Python 3.9 and now installs `curl` for its own health check.
-
 ## License
 
 No license file is included yet — add one before reusing the code.
